@@ -1,0 +1,11 @@
+{
+  "active_issue_number": 2133,
+  "active_issue_url": "https://github.com/holoviz/lumen/issues/2133",
+  "upstream_url": "https://github.com/holoviz/lumen",
+  "upstream_branch": "main",
+  "upstream_commit_sha": "a838017d9329f239d4f9079f3f649fdb4f9642d6",
+  "current_stage": "stage_1_repository_verification_issue_discovery_and_ranking",
+  "stage_1_status": "complete",
+  "next_stage": "stage_2_dependency_mapping",
+  "updated_at": "2026-10-18T00:00:00Z"
+}
