@@ -296,6 +296,48 @@ async def test_exploration_ui_error_replan(explorer_ui_with_error):
     tabs = exploration.view[0]
     assert len(tabs) == 2
 
+async def test_switching_exploration_mid_run_keeps_conversations(explorer_ui):
+    ui = explorer_ui
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+
+    async def ask(text, title, slug):
+        ui.interface.send(text, user="User", respond=False)
+        ui.interface.send(f"Planning {title}", user="Planner", respond=False)
+        ui.llm.set_responses([
+            SQLQueryWithTables(query="SELECT * FROM test_table", table_slug=slug, tables=["test_table"]),
+            f"Answer {title}",
+        ])
+        exploration = ui._exploration["view"]
+        plan = Plan(
+            ActorTask(SQLAgent(llm=ui.llm)),
+            ActorTask(ChatAgent(llm=ui.llm)),
+            history=[{"content": text, "role": "user"}],
+            title=title,
+            context=ui.context if exploration is ui._home else dict(exploration.context),
+        )
+        with ui._busy():
+            await ui._execute_plan(plan)
+
+    await ask("read this", "Read CSV", "first")
+
+    invoke = ui.llm.invoke
+
+    async def slow_invoke(*args, **kwargs):
+        await asyncio.sleep(0.2)
+        return await invoke(*args, **kwargs)
+
+    ui.llm.invoke = slow_invoke
+    task = asyncio.ensure_future(ask("plot me", "SST Anomaly", "second"))
+    await async_wait_until(lambda: ui._explorations.value["label"] == "SST Anomaly")
+    ui._explorations.active = (1,)
+    await task
+
+    first, second = (item["view"] for item in ui._explorations.items[1:])
+    assert first.conversation[0].object == "read this"
+    assert second.conversation[0].object == "plot me"
+
+
 async def test_add_exploration_from_explorer(explorer_ui):
     """Test creating an exploration from the table explorer."""
     # Set up the explorer to have a table selected
@@ -708,6 +750,12 @@ async def test_initial_state_shows_splash(explorer_ui):
     # Should be on home
     assert explorer_ui._explorations.value['view'] is explorer_ui._home
     assert len(explorer_ui._explorations.items) == 1  # Only home
+
+
+async def test_closed_nav_drawer_reserves_toggle_gutter(explorer_ui):
+    """The closed drawer's 24px toggle tab must not float over the content."""
+    assert explorer_ui._nav_drawer.open is False
+    assert explorer_ui._nav_drawer.min_width == 24
 
 
 async def test_exploration_launch_transitions_to_split(explorer_ui):
@@ -1512,6 +1560,23 @@ class TestLumenAIServeYamlRouting:
         finally:
             bokeh_serve.build_single_handler_applications = original
 
+    def test_llm_model_url_configures_llamacpp(self):
+        url = "https://huggingface.co/org/repo-GGUF/blob/main/model.gguf?chat_format=chatml"
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers()
+        LumenAIServe(sub.add_parser("serve"))
+        args = parser.parse_args(["serve", "data.csv", "--llm-model-url", url])
+        original = bokeh_serve.build_single_handler_applications
+        try:
+            with patch.object(Serve, "invoke", return_value=True):
+                with patch("lumen.ai.llm.LlamaCpp.warmup") as warmup:
+                    LumenAIServe(argparse.ArgumentParser()).invoke(args)
+            warmup.assert_called_once_with({
+                "default": {"repo_id": "org/repo-GGUF", "filename": "model.gguf", "chat_format": "chatml"}
+            })
+        finally:
+            bokeh_serve.build_single_handler_applications = original
+
     def test_yaml_route_resets_stale_aihandler_override(self):
         """A prior in-process invoke() call for a data file leaves the
         AIHandler-backed closure installed; a later yaml-only invoke() call
@@ -1569,7 +1634,7 @@ def test_serve_passes_detected_provider_to_app(capsys, monkeypatch):
 def test_serve_llm_model_url_uses_llama_cpp():
     with patch.object(LlamaCpp, "warmup") as warmup:
         _invoke_serve("--llm-model-url", "https://huggingface.co/org/repo/blob/main/model.gguf")
-    assert warmup.call_args.args[0]["default"]["model_file"] == "model.gguf"
+    assert warmup.call_args.args[0]["default"]["filename"] == "model.gguf"
 
 
 @pytest.mark.parametrize("argv, quiet", [([], True), (["--log-level", "debug"], False)])

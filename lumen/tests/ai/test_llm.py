@@ -250,7 +250,8 @@ def test_claude_code_command_defaults_to_plan_mode():
 
     assert command == [
         "claude", "--print", "--output-format", "json", "--no-session-persistence",
-        "--max-turns", "3", "--permission-mode", "plan", "--model", "sonnet",
+        "--max-turns", "3", "--permission-mode", "plan",
+        "--tools", "", "--strict-mcp-config", "--setting-sources=", "--model", "sonnet",
     ]
 
 
@@ -441,11 +442,11 @@ async def test_cli_provider_isolates_cwd(monkeypatch, tmp_path):
     await CopilotCli()._run_command(["copilot"], "Hi")
     await CopilotCli(working_dir=str(tmp_path))._run_command(["copilot"], "Hi")
 
-    (default_cwd, _), (isolated_cwd, existed), (override_cwd, _) = seen
-    assert default_cwd is None
-    assert existed
-    assert Path(isolated_cwd).name.startswith("lumen-cli-")
-    assert not Path(isolated_cwd).exists()
+    (claude_cwd, claude_existed), (isolated_cwd, existed), (override_cwd, _) = seen
+    for cwd, was_dir in ((claude_cwd, claude_existed), (isolated_cwd, existed)):
+        assert was_dir
+        assert Path(cwd).name.startswith("lumen-cli-")
+        assert not Path(cwd).exists()
     assert override_cwd == str(tmp_path)
 
 
@@ -1320,6 +1321,22 @@ def test_api_key_env_var_does_not_clobber_provider_default(monkeypatch):
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
     assert OpenAI().api_key == "sk-from-env"
+
+
+@pytest.mark.parametrize("host, endpoint", [
+    ("remote:11500", "http://remote:11500/v1"),
+    ("0.0.0.0", "http://0.0.0.0:11434/v1"),
+    ("https://ollama.example.com:443/", "https://ollama.example.com:443/v1"),
+])
+def test_ollama_endpoint_reads_ollama_host(monkeypatch, host, endpoint):
+    monkeypatch.setenv("OLLAMA_HOST", host)
+    assert Ollama().endpoint == endpoint
+    assert Ollama(endpoint="http://explicit:1/v1").endpoint == "http://explicit:1/v1"
+
+
+def test_ollama_endpoint_default_without_ollama_host(monkeypatch):
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    assert Ollama().endpoint == "http://localhost:11434/v1"
 
 
 # ---------------------------------------------------------------------------
